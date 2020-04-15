@@ -1,0 +1,910 @@
+---
+title: '**Risk_Analytics-Predict Loan Defaulters**'
+author: "Abhishek Garg"
+date: "17/03/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## **Problem Statement:**
+
+Lending is as old as human existence. However, the process comes with a number of risks, the most important being a borrower failing to pay the loan amount lent. Many banks/lending firms believed lending to individuals is risk-free given given that have better  credit scores and sometimes the loans are backed by collateral. However, the banking system has witnessed an increase in the loan defaults i.e. the borrower is not able to pay back the instalment on time. These loan defaults directly impact the revenues of a banking system/lending company.
+
+Now a days, these institutions (with the availability of technological tools) are scrutinizing each loan application to identify potential loan default cases so that they can predict which client is going to default the loan repayment and at which step.
+
+These organizations recieve a number of data points, which they scrutinize in detail with the the primary aim of building a robust model to predict loan default that would help the firms take required actions, as and when necessary. 
+
+Effectively, the problem becomes a classification problem in machine learning parlance, which can be tackeled by using multiple algorithms such as binary logistic regression, ensemble models etc. Again, each algoritm has its own pro's and cons. So proper care must be excercised keeping in ming the data at hand, as well as pro's and con's of each algorithm.
+
+## **Which Algorithm to Select:**
+
+In machine learning, there’s something called the “No Free Lunch” theorem which means no one algorithm works well for every problem. Some problems are very specific and require a unique approach. E.g. if you look at a recommender system, it’s a very common type of machine learning algorithm and it solves a very specific kind of problem. While some other problems are very open and need a trial & error approach. 
+
+Selecting the best algorithm to use for a particular problem is more of an art rather than a science with no straight answer. Some algorithms can work with smaller sample sets while others require tons and tons of samples. Certain algorithms work with certain types of data. For instance Naïve Bayes works well with categorical input but is not at all sensitive to missing data.
+
+Furthermore, other constrains that need to be looked at include (but not limited to) data storage capacity, does the prediction have to be fast, does the learning have to be fast etc.
+
+Of course, if one really cares only about accuracy, the best bet is to test out a couple different ones (making sure to try different parameters within each algorithm as well), and select the best one by cross-validation. If the training set is small, high bias/low variance classifiers (e.g., Naive Bayes) have an advantage over low bias/high variance classifiers (e.g., kNN), since the latter will overfit. However, low bias/high variance classifiers start to win out as the training set grows (they have lower asymptotic error), since high bias classifiers aren’t powerful enough to provide accurate models.
+
+However, its important to note that better data often beats better algorithms, and designing good features goes a long way. And if you have a huge dataset, then whichever classification algorithm you use might not matter so much in terms of classification performance (so choose your algorithm based on speed or ease of use instead).
+
+For this problem I would go with Logistic Regression, CART and Random Forest.
+
+## **Enviornment Set-up:**
+
+#### **Global Setting in Markdown:**
+
+```{r setup, include=FALSE, echo = TRUE}
+
+require("knitr")
+knitr::opts_chunk$set(root.dir = "D:/RProgramming/Finance_&_Risk_Analytics/Project/DataSets/")
+
+```
+
+#### **Load Required Libraries:**
+
+There are generally two ways to access functions from R packages (have used package and library interchangeably). Either via a direct access without loading the library, i.e. package::function() or by loading (attaching) the library into workspace (environment) and thus making all its functions available at once. **The problem with the first option is that direct access sometimes can lead to issues (unexpected behavior/errors) and makes coding cumbersome. The problem with the second approach is a conflict of function (and other variables) names between two libraries (called masking). A third complication is that some functions require libraries to be loaded (e.g. some instances of caret::train()) and thus attach the library without being explicitly told. Again this may lead to masking of functions and if user is unaware this can lead to nasty problems (conceived bugs) down the road (sometimes libraries will issue a warning upon load, e.g. plyr when dplyr is already loaded).** SInce there is no golden approach ,  I have used the following approach: 
+
+* Load major libraries that are used frequently into workspace but pay attention to      load succession to avoid unwanted masking.
+* access rarely used functions directly (being aware that they work and don’t attach     anything themselves)
+* Sometimes use direct access to a fucntion although its library is loaded (either to    make clear which library is currently used or because we explicitly need a function    that has been masked due to another loaded library)
+
+I will load a few essential libraries here as they are used heavily. Other librraies may only be loaded in respective section. Although the analysis can be done without loading many librraies upfront and loaded only when needed, but one would need to be aware of the succession to avoid issues.
+
+This code below automatically installs any missing libraries. It is important to make sure to have proper proxy settings. 
+
+```{r load libraries, include=FALSE,warning=FALSE, message=FALSE, echo=FALSE}
+
+# define used libraries
+libraries_used <- 
+  c("lazyeval", "readr","plyr" ,"dplyr", "readxl", "ggplot2", 
+    "funModeling", "scales", "tidyverse", "corrplot", "GGally", "caret",
+    "rpart", "randomForest", "pROC", "gbm", "choroplethr", "choroplethrMaps",
+    "microbenchmark", "doParallel", "e1071", "lubridate","zoo","ROSE","caTools","ROCR","DataExplorer","cowplot","grid","gridExtra","VIM","ggcorrplot","mpmi","Hmisc", "data.table","tidyr", "data.table", "kableExtra", "purrr","devtools","dlookr","dataMaid","esquisse","minerva","easypackages", "pander","autoEDA","SmartEDA" ,"knitr", "rmarkdown", "markdown","glmnet")
+
+# check missing libraries
+libraries_missing <- 
+  libraries_used[!(libraries_used %in% installed.packages()[,"Package"])]
+# install missing libraries
+if(length(libraries_missing)) install.packages(libraries_missing)
+
+#### load libraries
+
+library(easypackages)
+libraries(libraries_used)
+
+```
+
+#### **Import and Check Data:**
+
+The loans data can be conveniently read via readr::read_csv(). Note that the function tries to determine the variable type by reading the first 1,000 rows which does not always guarantee correct import especially in cases of missing values at the begining of the file. Other packages treat imports differently, for example data.table::fread() takes a sample of 1,000 rows to determine column types (100 rows from 10 different points) which seems to get more robust results than readr::read_csv(). Both package functions allow the explicit definition of column classes, for readr::read_csv() it is parameter col_types and for data.table::fread() it is parameter colClasses. Alternatively, readr::read_csv() offers the parameter guess_max that allows increasing the number of rows being guessed similar to SAS import procedure parameter guessingrows. Naturally, import time increases if more rows are guessed. 
+
+For importing this data I have used the "fread" function from data.table library. This has ensured that the data, as well as calculations can be performed fast.
+
+ + **Note-**  As noted, **the data-types for the datafrome may not have been correctly guessed when using the data.table::fread () function, hence, I  would check the data-types for each of the variables and make corrections whenever required.**  
+
+```{r Import data and check data}
+
+#### Importing Data- The datset seem big, hence used fread from data.table library
+
+Loan_Data= fread("D:/RProgramming/CapStone_Project/DataSets/Loan_Default_Data.csv", header = TRUE) 
+
+#### Check head of data imported
+head(Loan_Data,20)
+
+
+```
+The dataset seems to have loaded properly as it shows 41 columns, and 226,786 observations. This confirms the original file. So we are good here.
+
+#### **Import Data Dictionary:**
+
+The meta data  and needs to be parsed via a special library, in this case we use readxl.
+
+The data dictionary provides explaination of the variables available in the dataset, and is provided in the form of an excel file. Since its excel, it would need to be parsed via readxl.  Let's import the same and visualize it in the form of a table.
+
+```{r import data dictionary}
+
+#### Loading readxl
+
+library(readxl)
+
+#### Load the Excel workbook
+excel_file = paste0("./Data_ Dictionary.xlsx")
+#### see available tabs
+excel_sheets(paste0("D:/RProgramming/CapStone_Project/DataSets/", excel_file))
+
+#### Reading the contents of the relevant tab in R  
+meta_loan_stats = read_excel(paste0("D:/RProgramming/CapStone_Project/DataSets/", excel_file), sheet = "Sheet1")
+
+#### Check Contents
+
+data_dict_kable=as.data.table((meta_loan_stats[,2:3] ))
+
+data_dict_kable %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),full_width = F, position = "left", fixed_thead = T)
+
+```
+
+While most of the variables seem self-explanatory, there are few which require some thought. So lets see them:
+
+* **loan_amnt, funded_amnt and funded_amnt_inv:** the loan amount variable shows the amount of loan applied by the borrower and the funded amont shows the amount of loan actually given. For instance, borrower with member_id applied for $5000 and $5000 was actually given. However, there is a difference   in funded_amnt and funded_amnt_inv (total amount committed by investors for that loan at that point in   time). For instance in the case of the borrower above, funded amount was $ 5000, but funded by           investors was $4975.This brings out 2 points. First the data set seems to be from a peer-to-peer         lending company, which actually links borrowers and investors (having surplus fuunds). Second, the       difference in funded amount and amount funded by investors signifies the amount provided by the lending   company.
+
+* *annnual_inc:** The annual incomes in the dataset are the ones provided by borrowers at the time of      application (self-reported). Hence, an exploration of this variable might be required to see the         accuracy of the details provided. We could also assume them to be correct, but a secondary look won't    harm.
+
+* **verification_status:** Generally lending companies ask borrowers to submit a number of documents to    verify that fact provided by them say income, work experience among others. This could be a good         variable to look into as it would also help us substatiate the accuracy on annual income. Generally, lending firms categorizes income verification into three statuses: not verified, source verified, and verified. Verified income means that firm has independently verified both the source and size of reported income, source verified means that they verified only the source of the income, and not verified means there was no independent verification of the reported values. 
+
+* **paymenr_plan:** is an arrangement with with borrowers to bring their loans back to current status (ie    Loan is up to date on all outstanding payments). This means if the borrower has not paid instalments,    a new payment plan could be made and the status of the loan would show as current.
+
+*  **dti:** DTI  compares thew borrowers monthly debt obligations (how much the borrower owes excluding mortgage and the requested  loan requested) to his/her  monthly gross income (how much you earn before taxes).
+
+* **delinq_2yrs:** indicates the number of times a borrower has been behind on payments in last 2 years. .
+* **earliest_cr_line:** This refers to The month the borrower's earliest reported credit line was opened.This could be helpful as it could help us determin the borrowers credit age (scince how much time this borrower is utilizing various credit facilities).
+
+* **inq_last_6mths:** Number of inquiries refers to the number of times a borrower's credit report is accessed by financial institutions, which generally happens when the borrower is seeking a loan or credit line. More inquiries leads to higher rates of nonperformance, perhaps indicating that increased borrower desperation to access credit might highlight poor financial health.
+
+* **revol_util:** Revolving utilization percent is the portion of a borrower's revolving credit limit (i.e. credit card limit) that they actually are using at any given point. For example, if a borrower's total credit limit is $15,000 and their outstanding balance is $1,500 their utilization rate would be 10%. Intuitively, the percentage of non-performing loans steadily increases with utilization rate. Borrowers with high utilization rates are more likely to have high fixed credit card payments which might affect their ability to repay their loans. Also, a high utilization rate often reflects a lack of other financing options, with borrowers turning to peer-to-peer lending as a last resort. 
+
+* **total_acc:** A larger number of total accounts indicates a longer credit history and a high level of trust between the borrower and financial institutions, both of which point to financial health and lower rates of default.
+
+
+#### **Check if there are Variables in Data_Description but not in DatsSet and vice Versa:**
+
+Although we have the dictionary,its important to look at if there are variables in the data and not in the dictioanry or vice versa. This has been done using dplyr::setdiff() function. 
+
+The function does what its name suggests ie. takes the rows that appear in first table but not in second table and creates the dataframe. 
+
+
+```{r check if variables in data frame but not in data dictionary}
+
+#### Variables in Loan DataSet but not in Description
+
+dplyr::setdiff(colnames(Loan_Data), meta_loan_stats$Fields)
+
+#### Variables in Data Description but not in Loans Data
+
+dplyr::setdiff(meta_loan_stats$Fields, colnames(Loan_Data) )
+
+
+
+```
+Given the result we can say that there seem to be no such variables. So this seems Good.
+
+## **Basic of the Data:**
+
+#### **Basic Analysis:**
+
+To do the basic analysis of the database, 
+
+```{r basic dataset analysis}
+
+#### Basic analysis
+
+dim(Loan_Data)
+class(Loan_Data)
+
+DataExplorer::introduce(Loan_Data)
+DataExplorer::plot_intro(Loan_Data)
+
+
+
+```
+
+As noted by the output of DataExplorer::introduce function, the dataset contains 226,786 rows and 41 coloumns. 16 coloums are discrete (factors or character format), while 25 coloumns are numeric. Although none of the variables are completly blank, we have 124802 obervations that are missing across different variables. Furthermore, only 45% of the rows have values across all variables. 
+
+  + This clearly indicates that the data missing value treatement might be necessary.
+
+Base::dim() shows that the file is read as data.table format.
+
+#### **Understanding Variables & Check Data Types:**
+
+As mentioned in section Data Import the import function uses heuristics to guess the data types and these may not always work. Hence checking the data type for each variable is required.
+
+Furthermore, understanding of variables would be required to do the analysis properly.
+
+```{r data type of each variable}
+library(funModeling)
+#### Seeing Variables & Data Types & Understand Variables
+
+d_type_loans <- as.data.table(funModeling::df_status(Loan_Data,print_results = FALSE)%>% select(variable,type))
+
+
+#### Merge data dictionary and Data type tables
+
+combine_d_type_loans= merge(data_dict_kable, d_type_loans, by.x = "Fields", by.y = "variable", sort=FALSE)
+
+#### Visulize the combined data tables 
+
+combine_d_type_loans %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),full_width = F, position = "left", fixed_thead = T)
+
+```
+
+**Data-Types:**
+
+The output above shows that multiple variables have data-types that would need to be modified. For instance, issue_d, earliest_cr_line, last_pymnt_d, next_pymnt_d & last_credit_pull_d are the variables which indicate the months in which each of the activities have taken place. These variables would need to convert these to date format for the analysis.
+
+Furthermore, factor variables seem to be imported as charater. Hence, a conversion of these variables to factor format would be needed.
+
+Numerical variables seem to have been imported correctly, as either numeric or integers. Lets leave it at that as of now.
+
+#### **See an Example of the Variables :**
+
+```{r check an illustrative example}
+# illustrative example
+
+Loan_Data %>% 
+  filter(member_id == "1296599")
+
+```
+
+## **Data-Trasformation_1:**
+
+#### **Changing Few Varibles to Date Format:**
+
+It seems the date format is consistent and follows month-year convention. I have used the base::as.Date() function to convert this to a date format. The function requires a day as well so we simply add the 01sh of each month to the existing character string via pasting together strings using base::paste0(). 
+
+I have used a custom date conversion function called  convert_date() and it will take the string value to be converted as input. We define the date format by following the function conventions of base::as.Date().
+
+
+```{r convert variables to date format}
+
+#### variables to be converted to date format 
+
+chr_to_date_vars <- c("issue_d", "last_pymnt_d", "last_credit_pull_d", "next_pymnt_d", "earliest_cr_line")
+
+
+convert_date <- function(x){
+  as.Date(x, format = "%d-%m-%Y")
+  } 
+
+Loan_Data <-
+  Loan_Data %>%
+  mutate_at(.funs = funs(convert_date), .vars = chr_to_date_vars)
+
+
+```
+
+#### **Changing Varibles to factor Format:**
+
+There are many variables such as term,grade,emp_length,home_ownership,verification_status,pymnt_plan, purpose,addr_state,application_type & loan_status, which have been read as "character". These would need to be converted to factor type for better analysis.
+
+
+```{r convert variables to factors}
+
+#### variables to be converted to factor format  
+
+chr_to_factor_vars <- c("term", "grade","emp_length", "home_ownership", "verification_status", "pymnt_plan","purpose", "addr_state","application_type","loan_status","desc")
+
+
+#### Converting to factors
+
+Loan_Data <-
+  Loan_Data %>%
+  mutate_at(.funs = funs(as.factor), .vars = chr_to_factor_vars)
+
+```
+
+#### **Check if Data Types Corrected:**
+
+```{r check data types again}
+
+str(Loan_Data)
+
+```
+
+#### **Removing Member Id as it would not be needed for Modelling:** 
+
+Furthermore, member_id, which is the unique id given to borrower is a variable that might not be required for modelling purpooses as its similar to row numbers, and would not help predict who might default. Hence this can be removed from the data.
+
+```{r remove member id col}
+
+Loan_Data$member_id=NULL
+
+```
+
+## **Exploratory Data Analysis_1:**
+
+#### **Summary:**
+
+```{r Summary}
+
+
+#### Checking Summary
+
+summary(Loan_Data)
+
+```
+
+**Few observations from summary data:**
+
+* Most of the numerical attributes seem to be positively skewed.
+* Loan_amt, funded_amt & funded_amt_inv variable have similar ranges.
+* Majority of the loans are for 36 months. For loans granted the interest rate ranges     from 5.32% to ~28%.   Analysis of interest rates with defaults might offer some insights.
+* Majority of people availing loans are with an experience of 10+ years.
+* Home Ownership variable contains one category as "ANY" with only one observation. This might be due      to some error in recording.  SOme appropriate action would need to be taken (say removal of row contining this   information), or merging with "Other category.
+* Description variable(Loan description provided by the borrower) has string values or statement. This     might not be very useful, all the more becasue information on the purpose of loan is captured in the     purpose cariable.
+* The variable "mths_since_last_delinq" seems to have large number of missing values. This would need to   be looked at in detail. Additionally, the variable "revol_util" also has some missing observations. 
+* Loan status variable could be considered as our target variable as it contains information on whether    the customer has fully paid the loan or defaulted.
+
+#### **Checking Numeric Variables for some understanding:**
+
+Before proceeding further its a good idea to have a look at levels and distribution categorical variables to see if some additional insights are provided. 
+
+```{r profile numeric variables}
+
+#### Numeric variables
+
+#### Profiling Numeric Variables
+
+Loan_Data_NUMERIC=profiling_num(Loan_Data)
+
+Loan_Data_NUMERIC %>% select(variable, mean, std_dev, skewness,p_01,p_99)%>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+arrange(Loan_Data_NUMERIC, -skewness) %>% select(variable, skewness)%>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+  
+```
+
+**Numerical Variables:**
+
+An overview of the table reveals that these features have significant outliers (when comparing the min & max value from summary function to the 1%ile and 99%ile values). Furthermroe, most of the variables that are skewed seem positivly skewed. 
+
+
+```{r checking factor variables}
+#### Factor variables
+
+freq(data=Loan_Data, plot = FALSE) 
+
+categ_analysis(data=Loan_Data, target = "loan_status")
+
+```
+
+**Factor Variables:**
+
+Within the ariable "emp_length" its seen that we have "n/a" as one of the labels. This is an important information as this could be treated similar to missing information. Furthermore, home ownership variable has values "any", "non" and "other", which might need modification.
+
+The prupose variable has 14 variables, and emp_lenght and addr state have many levels. These variables seems to be the ones which might impact our model performance because of high cardinality. These could  be combined if we can spot some logic.
+
+#### **Looking at Data in More Detail:**
+
+Let’s look at the data in more detail. 
+
+The usual approach may be to use base::str() function to get a summary of the data structure. However, it may be useful to quantify the “information power” of different metrics and dimensions by looking at the ratio of zeros and missing values to overall observations. This will not always reveal the truth (as there may be variables that are only populated if certain conditions apply) but it still gives some indication.
+
+The funModeling package offers the function funModeling::df_status() for that. It does not scale very well and has quite a few dependencies (so a direct call is preferred over a full library load) but it suits the purpose for this data. Unfortunately, it does not return the number of rows and columns. 
+
+To get infomration on the variables, I have used the funModeling::df_status. I have created a meta_loan variable, as this information might be required at a later stage.  
+The meta table contains the absolute number of unique values which is helpful for plotting (for attributes that is). 
+
+Another interesting ratio to look at is that of unique values over all values for any attribute. A high ratio would indicate that this is probably a “free” field, i.e. no particular constraints are put on its values (except key variables). This information might also be helpful for later analysis.When looking into correlations, these high ratio fields will have low correlation with other fields but they may still be useful e.g. because they have “direction” information (e.g. the direction of an effect) . Hence I have added a respective variable to the meta data. For improved readability,  scales::percent() function has been used to convert output to percent.
+
+```{r check data in more detail}
+
+#### Seeing number of zeros, NA's, unique values and data type
+
+meta_loans <- as.data.table(funModeling::df_status(Loan_Data, print_results = FALSE))
+meta_loans %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+
+#### Ordering data by percentage of NA
+
+arrange(meta_loans, -p_na) %>% select(variable, q_na, p_na)%>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+#### Ordering data by percentage of zeros
+
+arrange(meta_loans, -p_zeros) %>% select(variable, q_zeros, p_zeros)%>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+#### Check unique values as proportion of overall values
+
+
+meta_loans <-
+  meta_loans %>%
+  mutate(uniq_rat = unique/ nrow(Loan_Data))
+
+meta_loans %>%
+  select(variable, unique, uniq_rat) %>%
+  mutate(unique = unique, uniq_rat = scales::percent(uniq_rat)) %>%
+  knitr::kable()%>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+arrange(meta_loans, -uniq_rat) %>% select(variable, unique, uniq_rat)%>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+
+```
+
+Upon looking at the output, it can be seen that data has one unique identifier that is member_id. Furthermore, there is no variable with 100% missing values i.e. information power of zero. There are a few which have a high ratio of NAs (mths_since_last_delinq, next_pymnt_d) so the it would need to be checked whether this is expected. There are also variables which have only one unique value, e.g. collection_recovery_fee. Again, the meta description should be checked to see the rationale but such dimensions might not useful for any analysis or model buidling.
+
+Variables such as funded_amnt_inv , dti, delinq_2yrs, inq_last_6mths, mths_since_last_delinq, revol_bal, revol_util, out_prncp, out_prncp_inv, total_pymnt, total_pymnt_inv, total_rec_prncp etc show presence of large number of zeros. These would also need to be checked in detail.
+
+An attribute like desc has over 30% unique values which makes it a poor candidate for modeling as it seems borrowers are free to describe their notion of loan purpose.
+
+In addition, there are factor variables like emp_length, purpose, addr_state show > than 10 levels. While there is no thumb rule with respect to the number of levels a variable should have for effective modelling, these numbers seem large, and we would need to see if they could be grouped.
+
+
+#### **Visializing Missing Values:**
+
+```{r visualize missing values}
+
+#### Seeing variables with missing values
+
+plot_missing(Loan_Data[,1:15])
+plot_missing(Loan_Data[,16:30])
+plot_missing(Loan_Data[,31:40])
+
+```
+
+## **Data Transformation_2:**
+
+#### **Missing Value Treatement:**
+
+As noticed above, there is 1 varaible  mths_since_last_delinq that have a large share of NA values. If we think about this in more detail, it may be reasonable to assume that NA values for the variable mths_since_last_delinq actually indicates that there was no event/record of any missed payment so there cannot be any time value. However, if this we impute zeros in place of NA, it might indicate that an event (delinquncy just happened last month) has just happened. Hence we would impute NA's in this variable by a very an unusual number say "-1" to indicate no missed payments. **Furthermore, it would be important to document these assumptions carefully.**
+
+Na's in revol_util are present in just 0.07% of the rows and in last_credit_pull_d are present in just 0.01% of observations. Hence removing these rows might not cause a serious issue.
+
+Other variable with large percentage of NA's is next_pmnt_date. This might be because the borrower has fully paid the loan. We would need to confirm this . As can be seen, all the opbservations where next_pmnt_d is blank belong to borrowers who have fully paid the loan.Hence, logically they would not have a due payment date. Additionally, we could also not think of any logical date/month that might be imputed. So the best treatment would be to remove the variable.
+
+Other variable is last_pnmt_date with 0.15% of missing observations.This variable indicates when the borrower has made last payment. We would need to explore this variable as well to decide on the treatement.
+
+###### **Exploring next_pmnt_date variable**
+
+```{r next payment date variable explore}
+#### Checking next_payment_date
+
+table(Loan_Data$next_pymnt_d, Loan_Data$loan_status, useNA = "ifany")
+
+```
+
+Indeed, all observations with next_pymnt_d as NA are fully paid.Imputing the NA values for this variable would also not make sense as peole who have paid fully would not have any payment due. As noticed above, ~91% of the observations in this variable are NA's, hence the best option would be to omit this variable (as in delete the variable) and not include in modelling.
+
+###### **Exploring last_pmnt_date variable**
+
+```{r r last payment date variable explore}
+
+#### Explore last payment date variable
+
+table(Loan_Data$last_pymnt_d, Loan_Data$loan_status, useNA = "ifany") ## all observations where this variable is blank belong to defulters
+
+#### Look at summary of last_pymnt_d, for defaulters
+
+summary(Loan_Data$last_pymnt_d[Loan_Data$loan_status=="Default"],na.rm = TRUE) ## summary shows that the last payment date for defaulters has a big range, hence no reasonable guess could be made for imputation
+
+
+```
+
+Interestingly all the observations, where this variable is blank belong to default category. So, if we remove the rows where missing observations are there, we might end up losing valuable information (given we are trying to predict default). If we look at the summary of last_pymnt_d of defaulters, we can see a large range, hence no reasonable imputation seems possible. Hence it seem best to exclude this variable as well.
+
+###### **Imputation or Row/Varibale Removal for Missing Values:**
+
+
+```{r replacing Values}
+#### Replacing NA with value for mths_since_last_delinq with -1
+
+Loan_Data$mths_since_last_delinq[is.na(Loan_Data$mths_since_last_delinq)] <- -1
+  
+#### Remove  NA rows in revol_util
+
+Loan_Data = Loan_Data[!is.na(Loan_Data$revol_util), ]
+Loan_Data = Loan_Data[!is.na(Loan_Data$last_credit_pull_d),]
+
+#### Remove next and last payment date variables
+
+Loan_Data$next_pymnt_d=NULL
+Loan_Data$last_pymnt_d=NULL
+
+
+```
+
+#### **Varibale Creation:**
+
+After removal of the variables "next_pymnt_d", as well as "last_pymnt_d", there are 3 variablels within our dataset which belong to the "Date" category viz: 1) issue-d (date on which loan was issueed to the customer), 2) earliest_cr_line (The month the borrower's earliest reported credit line was opened) 3 last_cr_pull_d (The most recent month credit was pulled from the account). 
+
+Based on domain understanding, it can be infered that people who have longer credit history are less likely to default. So given the issue_d and earliest_cr_line variables  "Age of Credit Line" can be derived, that is the number of days since the borrower has credit history. This would a difference of of issue date and earliest credit line. 
+
+Furthermore, I could also take latest account activity, which  can be derived from the variable last_credit_pull_date (taking the difference of last credit pull date from February-2016, the data base date). However this could be a problem when the model is run in the future as the last credit pull date will change. So it might be appropriate to remove this variable altogether.
+
+```{r additional date variables}
+
+#### Creation of age of credit line variable
+
+Loan_Data$Age_Credit_Line= as.numeric(Loan_Data$issue_d-Loan_Data$earliest_cr_line)
+
+summary(Loan_Data$Age_Credit_Line)
+
+```
+
+#### **Transform n/a in emp.length Variable:**
+
+As noted previously, the variable "emp_length" contains a category "n/a", which though not identified a missing observation, actually indicates null entries. 
+
+In categorical or nominal variables, the quickest treatment is to convert the empty value into the string unknown. Therefore, the machine learning model will handle the “empty” values as another category. Think about it like a rule: “If variable_X = unknown, then the outcome = yes”.
+
+```{r convert na in emp length to unknown}
+
+
+#### Convert emp_length to character
+
+
+Loan_Data$emp_length=as.character(Loan_Data$emp_length)
+
+#### Replace "n/a" to "Unknown"
+Loan_Data$emp_length[Loan_Data$emp_length=="n/a"]="Unknown"
+
+#### Convert variable back to factor
+Loan_Data$emp_length=as.factor(Loan_Data$emp_length)
+
+
+#### Check new levels
+         
+levels(Loan_Data$emp_length)
+
+```
+
+## **Write  DF after Initial Pre Process:**
+
+```{r}
+
+write.csv(Loan_Data,"D:/RProgramming/CapStone_Project/DataSets//Loan_Default_Data_Initial_Tableau.csv", row.names = FALSE)
+
+```
+
+
+#### **Group Factor Variables Having Large Number of Levels:**
+
+As discussed previously, high cardinallity is an issue in categorical variables. We would need to see which levels for instance have  almost no participation in our target. If we find such cases, possible we could reduce the carinality by keeping those categories that are present in a high percentage of data share, for example 70, 80 or 90%, while clubbing the thers under a new category. However, it is to be noted that grouping just by looking that the frequency may destroy the information of the variable, thus it loses predictive power. 
+
+Especifically in cases of predictive modelling, there is a tradeoff between the representation of the data (how many rows each category has), and how is each category related to the outcome variable.
+
+In these cases its a good idea to look at complete profiling regarding the target variable based on categ_analysis. Within categ_analysis, each row has attributes that define each category in terms of representativeness and likelihood. Note: categ_analysis assigns internally the number 1 to the less representative class, default in our case, in order to calculate the mean, sum and percentage
+
+In our case variables emp_length (12 levels), purpose (14 levels) and add_state (51 levels) are the ones with high cardinality. SO we focus on them for now.
+
+```{r factor grouping}
+
+#### Checking profiling of loan status variables (with large number of levels) to see the possible groups
+
+categ_profiling= categ_analysis(data=Loan_Data,input = c('purpose','emp_length','addr_state') ,target = "loan_status")
+
+
+```
+
+**purpose:**
+
+```{r regroup purpose}
+
+#### Ordering purpose by mean target
+
+categ_profiling_purpose= categ_analysis(data=Loan_Data,input = c('purpose') ,target = "loan_status")
+
+arrange(categ_profiling_purpose, -mean_target) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+# Reducing the cardinality-Purpose
+
+#### Purpose variable
+
+#### Convert purpose to character
+
+Loan_Data$purpose=as.character(Loan_Data$purpose)
+
+#### Replace "Categories other than debt consiilidation and credit card to to "OTHER" an "Home"
+Loan_Data$purpose[Loan_Data$purpose=="major_purchase"|Loan_Data$purpose=="vacation"|Loan_Data$purpose=="wedding"|Loan_Data$purpose=="medical"|Loan_Data$purpose=="other"|Loan_Data$purpose=="car"|Loan_Data$purpose=="small_business"|Loan_Data$purpose=="educational"]="Other_Purpose"
+Loan_Data$purpose[Loan_Data$purpose=="house"|Loan_Data$purpose=="home_improvement"|Loan_Data$purpose=="moving"|Loan_Data$purpose=="renewable_energy"]="HOME"
+
+
+#### Convert variable back to factor
+Loan_Data$purpose=as.factor(Loan_Data$purpose)
+
+
+#### Check new levels
+         
+levels(Loan_Data$purpose)
+
+#### Check categprofile again
+
+categ_profiling_purpose_after_grouping= categ_analysis(data=Loan_Data,input = c('purpose') ,target = "loan_status")
+
+arrange(categ_profiling_purpose_after_grouping, -mean_target) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"),full_width = F, position = "left", fixed_thead = T)
+
+```
+
+
+From the mean_target column we can infer that highest likelihood of defaulting for any category is 9.2%. Specifically, debt consolidation has the highest likelihood of default, followed by moving. On the other hand, borrowers taking loan for wedding and education have the least likelihood. That said, it can be seen that debt consolidation and credit card represent nearly 82% of the defaulters, and 78% of the total data. Hence, its good to have these categories for sure. Since all other categories represent a very small category of defaulters (individually), as well as total data, lets club them in other category, except for home related categories, which could be clubbed as home.
+
+**emp_length:**
+
+
+```{r group emp length}
+# Reducing the cardinality-emp_lenght
+
+#### emp_length variable
+
+#### Convert emp_length to character
+
+Loan_Data$emp_length=as.character(Loan_Data$emp_length)
+
+#### Replace "Categories 
+Loan_Data$emp_length[Loan_Data$emp_length=="< 1 year"|Loan_Data$emp_length=="1 year"|Loan_Data$emp_length=="2 years"|Loan_Data$emp_length=="3 years"|Loan_Data$emp_length=="4 years"]="0-4 Yrs"
+Loan_Data$emp_length[Loan_Data$emp_length=="5 years"|Loan_Data$emp_length=="6 years"|Loan_Data$emp_length=="7 years"|Loan_Data$emp_length=="8 years"|Loan_Data$emp_length=="9 years"]="5-9 Yrs"
+
+
+#### Convert variable back to factor
+Loan_Data$emp_length=as.factor(Loan_Data$emp_length)
+
+
+#### Check new levels
+         
+levels(Loan_Data$emp_length)
+
+```
+
+Upon looking at the "perc_rows" in the ouput, it can be seen that 10+ years alone represent ~30% of the cases, show a likelihood of default at 8.4% (as seen from mean target) and represent ~30% of the overall default cases (as seen from perc_target). Hence, this seems to be an important level in this variable. 
+
+On the other hand, the level unknown, although shows the highest liklihood of default (12.2%), it is just present in 3.7% of the cases (overall) and represent ~5% of the default cases. 
+
+Remining employment years show a likligood, as well as representation in single digits.
+
+
+**add_State:**
+
+
+For add_state we will be using funmodelling::auto_grouping technique, which uses kmeans clustering technique and the table returned by categ_analysis in order to create groups -clusters- which contain categories which exhibit similar behavior in terms of perc_rows & perc_target. The combination of both will lead to find groups considering likelihood and representativeness. 
+
+```{r group add_state}
+
+# Reducing the cardinality-add-State
+
+state_groups=auto_grouping(data = Loan_Data, input = "addr_state", target="loan_status", n_groups=5, seed = 999)
+state_groups$df_equivalence
+
+state_groups$recateg_results
+
+#### dd the new category column to the original dataset.
+
+Loan_Data_New=Loan_Data %>% inner_join(state_groups$df_equivalence, by="addr_state")
+
+Loan_Data_New$addr_state_rec=as.factor(Loan_Data_New$addr_state_rec)
+
+Loan_Data_New$addr_state=NULL
+class(Loan_Data_New$addr_state_rec)
+
+
+
+```
+
+
+#### **Remove Variables Deemed Unfit for Most Modeling:**
+
+As stated before some variables may actually have information value but are kicked out as we deem them unfit for most practical purposes. Arguably one would have to look at the actual value distribution as e.g. a high number of unique values may be non-sense values for only a few loans but we don’t dig deeper here.
+
+We can get rid of following variables with given reason
+
+* id: Represent unique value to borrower. Might not be be useful until we are trying to see top/botton         borrowers
+* desc: textual infomraiton
+* recoveries: 100% zeros
+* collection_recovery_fee: 100% zeros
+* pymnt_plan: Low variation ( only 6 rows vs others)
+* application_type:  Low variation ( only 6 rows vs others)
+
+```{r remove variables}
+
+#### Remove variables 
+
+Loan_Data_New$member_id=NULL
+Loan_Data_New$desc=NULL
+Loan_Data_New$recoveries=NULL
+Loan_Data_New$collection_recovery_fee=NULL
+Loan_Data_New$pymnt_plan=NULL
+Loan_Data_New$application_type=NULL
+Loan_Data_New$addr_state=NULL
+
+
+```
+
+
+#### **Regroup Home Ownership :**
+
+If we look at the home ownership variables, there are levels such as NONE(with 36 oobservations), Other (with 112 observations) and ANY (with 1 observation). I believe since these levels are not having many observations and hence might not be very insighful individually. Hence, let's group all the observations under the level "OTHER".
+
+```{r regroup levels in home ownership}
+table(Loan_Data_New$home_ownership)
+
+#### Convert emp_length to character
+
+
+Loan_Data_New$home_ownership=as.character(Loan_Data_New$home_ownership)
+
+#### Replace "Any & NONE" to "OTHER"
+Loan_Data_New$home_ownership[Loan_Data_New$home_ownership=="ANY"]="OTHER"
+Loan_Data_New$home_ownership[Loan_Data_New$home_ownership=="NONE"]="OTHER"
+
+#### Convert variable back to factor
+Loan_Data_New$home_ownership=as.factor(Loan_Data_New$home_ownership)
+
+
+#### Check new levels
+         
+levels(Loan_Data_New$home_ownership)
+
+```
+
+
+## **Exploratory Data Analysis_2:**
+
+#### **Looking at the Default Variable:**
+
+###### **Defining Default:**
+
+Our ultimate goal is the prediction of loan defaults from a given set of observations by selecting explanatory (independent) variables (also called feature in machine learning parlance) that result in an acceptable model performance as quantified by a pre-defined measure. This goal will also impact our exploratory data analysis. We will try to build some intuition about the data given our knowledge of the final goal. 
+
+For loans data the usual variable of interest is a delay or a default on required payments. So far we have identified the variable "Loan Status" that could be our target variable. 
+
+One may speculate about the reasons but a plausible explanation may be that the definiton of default depends on the perspective. A risk-averse person may classify any delay in scheduled payments immediately as default from day one while others may apply a step-wise approach considering that borrowers may pay at a later stage. Yet another classification may look at any rating deterioration and include a default as last grade in a rating scale.
+
+Let’s look at potential variables that may indicate a default / delay in payments:
+
+loan_status: Current status of the loan
+delinq_2yrs: The number of 30+ days past-due incidences of delinquency in the borrower’s credit file for the past 2 years
+mths_since_last_delinq: The number of months since the borrower’s last delinquency.
+
+We can look at the unique values of above variables by applying base::unique() via the purrr::map() function to each column of interest. 
+
+```{r probable default variables}
+
+purrr::map(.x = Loan_Data_New[, c("loan_status", "delinq_2yrs", "mths_since_last_delinq")], .f = base::unique)
+```
+
+We can see that delinq_2yrs shows only a few unique values which is a bit surprising as it could take many more values given its definition. The variable mths_since_last_delinq has some surprisingly large values. Both variables only indicate a delinquency in the past so they cannot help with the default definition.
+
+The variable loan status seems to be an indicator of the current state a particular loan is in. Hence, we could use Loan Status as our target default variable.
+
+###### **Looking at the Default Variable:**
+
+A look at the distribution of the target variable would be helpful as it would provide insights if some treatement (say balancing) would be required before the preperation of the model. 
+
+```{r Visualize loan default}
+#### Visualize number of Loan Defaulters in the Data Set
+
+ggplot(Loan_Data_New,aes(x=loan_status))+
+    geom_bar(fill = c("red","lightgreen"))+
+    geom_text(aes(label=..count..),stat='count',vjust=-0.5)+
+    labs(x="Number of Records", y="Count")+ theme_classic()
+
+ggplot(Loan_Data_New,aes(x=loan_status, y=..prop.., group=1))+
+    geom_bar(fill = c("red","lightgreen"))+
+    geom_text(aes(label=(..prop..)*100),stat='count',vjust=-0.5)+
+    labs(x="Proportion of Records", y="Count")+ theme_classic()
+
+
+```
+The charts clearly show that the default variable just represents ~8% of the total observations. This is a clear indication that there is class imbalance, and might need to be treated before modelling purposes.
+
+
+#### **Loan Issuance Over Time:**
+
+```{r loan issuance over time}
+
+ggplot(Loan_Data_New, aes(issue_d, loan_amnt)) +
+    geom_bar(stat="identity", fill="lightgreen", color="lightgreen", size=0.1) + 
+    geom_smooth() +
+    ggtitle("Total Amount Issued Per Month")
+```
+
+The plot above clearly shows increasing trend of loans issued.
+
+###### **Loan Amount by Grade:**
+
+Lets investigate the distribution of loan amount over the different grades with a standard boxplot highlighting potential outliers in red.
+
+```{r Loan Amnt by Grade}
+
+#Function'
+
+by_grade <- table(Loan_Data_New$funded_amnt, Loan_Data_New$grade, exclude="")
+prop_grade <- prop.table(by_grade,2)
+barplot(prop_grade, main = "Loan Performance by Grade", xlab = "Grade", 
+        col=c("darkblue","red"), legend = rownames(prop_grade))
+
+
+give_count <- 
+  stat_summary(fun.data = function(x) return(c(y = median(x)*1.06,
+                                               label = length(x))),
+               geom = "text")
+give_mean <- 
+  stat_summary(fun.y = mean, colour = "darkgreen", geom = "point", 
+               shape = 18, size = 3, show.legend = FALSE)
+#### Plot Grade with Loan Amnt
+
+Loan_Data_New %>%
+  ggplot(aes(x=grade, y=funded_amnt, fill = grade)) +
+  geom_boxplot(outlier.colour = "red", outlier.shape = 1) +
+  labs(title="Funded Amount by Grade", x = "Grade", y = "Funded Amount \n")
+
+
+```
+
+**Few points from the plot:**
+
+* There is not a lot of difference between default and non-default
+* Lower quality loans tend to have a higher loan amount
+* The loan amount spread (IQR) seems to be slightly higher for lower quality loans
+
+###### **Int Rate by Grade:**
+
+```{r int rate by grade}
+#### Int by Grade
+
+ggplot(Loan_Data_New , aes(x = grade , y = int_rate , fill = grade)) + 
+        geom_boxplot() + 
+        theme_classic() + 
+        labs(y = 'Interest Rate' , x = 'Grade')
+
+ggplot(Loan_Data_New, aes(int_rate, fill = grade)) + geom_density() + facet_grid(grade ~ .)
+
+```
+
+**Few points from the plot:**
+
+* Interest rates go up as the risk goes up.
+* The spread of rates seems to increase with grade worsening
+* There tend to be more outliers on the lower end of the rate
+
+## **Data Transformation_3:**
+
+#### ***Removal of Date Variables:**
+
+```{r removal of date varaibles}
+
+Loan_Data_New$issue_d=NULL
+Loan_Data_New$earliest_cr_line=NULL
+Loan_Data_New$last_credit_pull_d=NULL
+
+```
+
+
+#### ***Convert Loan Status to Dummy Variable:**
+
+```{r convert loan status to dummy}
+#### Assignig 1 to default
+
+Loan_Data_New$Loan_Status_Dummified= ifelse(Loan_Data_New$loan_status=="Default",1,0)
+Loan_Data_New$Loan_Status_Dummified=as.factor(Loan_Data_New$Loan_Status_Dummified)
+
+
+#### Remove Loan status as dummy has been created
+
+Loan_Data_New$loan_status=NULL
+
+```
+
+## **Create New DF after Initial Pre Process:**
+
+```{r}
+Loan_Data_New_1=Loan_Data_New
+
+write.csv(Loan_Data_New_1,"D:/RProgramming/CapStone_Project/DataSets//Loan_Default_Data_Post_Process.csv", row.names = FALSE)
+
+```
+
+
+
+
+
+

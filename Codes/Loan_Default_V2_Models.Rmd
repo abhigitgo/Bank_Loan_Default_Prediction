@@ -1,0 +1,1103 @@
+---
+title: "Loan_Default_Pred_EDA_& Modelling"
+author: "Abhishek Garg"
+date: "20/03/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+## **Enviornment Set-up:**
+
+#### **Global Setting in Markdown:**
+
+```{r setup, include=FALSE, echo = TRUE}
+
+require("knitr")
+knitr::opts_chunk$set(root.dir = "D:/RProgramming/Finance_&_Risk_Analytics/Project/DataSets/")
+
+```
+
+#### **Load Required Libraries:**
+
+```{r load libraries, include=FALSE,warning=FALSE, message=FALSE, echo=FALSE}
+
+# define used libraries
+libraries_used <- 
+  c("lazyeval", "readr","plyr" ,"dplyr", "readxl", "ggplot2", 
+    "funModeling", "scales", "tidyverse", "corrplot", "GGally", "caret",
+    "rpart", "randomForest", "pROC", "gbm", "choroplethr", "choroplethrMaps",
+    "microbenchmark", "doParallel", "e1071", "lubridate","zoo","ROSE","caTools","ROCR","DataExplorer","cowplot","grid","gridExtra","VIM","ggcorrplot","mpmi","Hmisc", "data.table","tidyr", "data.table", "kableExtra", "purrr","devtools","dlookr","dataMaid","esquisse","minerva","easypackages", "pander","autoEDA","SmartEDA" ,"knitr", "rmarkdown", "markdown","glmnet", "MASS","car")
+
+
+# check missing libraries
+libraries_missing <- 
+  libraries_used[!(libraries_used %in% installed.packages()[,"Package"])]
+# install missing libraries
+if(length(libraries_missing)) install.packages(libraries_missing)
+
+#### load libraries
+
+library(easypackages)
+libraries(libraries_used)
+
+```
+
+#### **Import and Check Data:**
+
+```{r Import data and check data}
+
+#### Importing Data- The datset seem big, hence used fread from data.table library
+
+Loan_Data_New= fread("D:/RProgramming/CapStone_Project/DataSets/Loan_Default_Data_Post_Process.csv", header = TRUE, stringsAsFactors = TRUE) 
+
+#### Check head of data imported
+head(Loan_Data_New,20)
+
+#### CHeck structure
+
+str(Loan_Data_New)
+
+#### Convert Loan Status to factor
+
+Loan_Data_New$Loan_Status_Dummified=as.factor(Loan_Data_New$Loan_Status_Dummified)
+
+```
+
+## **Data-Split:**
+
+#### **Data Split to Train, Validation & Testing:**
+
+Ideally, while performing modelling, each observation should either be used for exploration or confirmation, not both.One can use an observation as many times for exploration, but should only use it once for confirmation. As soon as an observation twice, the task has switched from confirmation to exploration. This is necessary because to confirm a hypothesis it is essential that data must be used  independent of the data that has been used to generate the hypothesis. Otherwise this would lead to  over optimistic results. 
+
+In a strict sense, this requires us to split the data into different sets:
+
+This means that even for exploratory data analysis (EDA), we would only look at parts of the data. All exploratory analysis will be performed on the training data only. Base::set.seed() to make the random split reproducible. 
+
+One note of caution is necessary here. Since not all data is used for model fitting, the test data may have labels that do not occur in the training set and with same rationale feautures may have unseen values. In addition, the data is imbalanced, i.e. only a few lenders default while many more do not. The last fact may actually require a non-random split considering the class label (default / non-default). The same may hold true for the features (independent variables). 
+
+```{r stratified sampling using caret}
+
+
+## with caret
+set.seed(6438)
+
+train_index <- 
+  caret::createDataPartition(y = Loan_Data_New$Loan_Status_Dummified, times = 1, 
+                             p = .7, list = FALSE)
+
+train_loan <- Loan_Data_New[train_index, ]
+test_loan <- Loan_Data_New[-train_index, ]
+
+dim(train_loan)
+
+prop.table(table(Loan_Data_New$Loan_Status_Dummified)) 
+prop.table(table(train_loan$Loan_Status_Dummified)) 
+prop.table(table(test_loan$Loan_Status_Dummified)) 
+
+
+```
+
+## **Exploratory Data Analysis_2:**
+
+Exploratory Data Analysis is an important part of any model building excercise as it ensures that the dataset has been understood in term of distributions, frequency etc. A visual look at the data should is an excellent starting point and ususally always precede any model considerations.
+
+The most important questions around visualization are which variables are numeric and if so are they continous or discrete and which are strings. Furthermore, which variables are attributes (categorical) and which make up sensible metric-attribute pairs. An important information for efficient visualization with categorical variables is also the amount of unique values they can take and the ratio of zero or missing values, both which were already analyzed above.
+
+Looking at variables individually would lead to greater insights from the available dataset. Doing so, would clearly enable us to look at distribution patterns and, whether or not they have presense of significant outliers Also consider group sizes and differences between median and mean driven by outliers. Especially when drawing conclusions from summarized / aggregated information, we should be aware of group size.  
+#### **Basic Analysis of Train Data:**
+
+To perform  analysis across numerical/categorical variables, functions in the funmodelling package would be used.
+
+```{r Basic analysis of train data}
+
+#### Profiling the Data Input
+train_loan_status=df_status(train_loan, print_results = F)
+
+
+### Checking  variables with 50% of zero values
+vars_more_zeros=filter(train_loan_status, p_zeros > 50)  %>% .$variable
+vars_more_zeros
+
+#### Ordering data by percentage of zeros
+
+arrange(train_loan_status, -p_zeros) %>% dplyr::select(variable, q_zeros, p_zeros)
+
+
+```
+
+The quantity of zeros, NA, Inf, unique values as well as the data type may lead to a good or bad model. The NA values for the dataset have aready been worked on, however there are quite a few variables which have high number of zero values **such as total_rec_late_fee( 97.93%), out_prncp	(91.65%), out_prncp_inv	(91.65%), delinq_2yrs	(83.48%) and inq_last_6mths (50.14%)**.Variables with lots of zeros may not be useful for modeling and, in some cases, they may dramatically bias the model. We would make a note here, and proceed with further analysis, but these variables might be removed if performance of the model is affected.
+
+#### **Check Distribution of Variables with Large NUmber of Zeros:**
+
+```{r dist of variables with large no of zeros}
+
+ggplot(train_loan, aes(total_rec_late_fee ,fill = Loan_Status_Dummified, color = Loan_Status_Dummified)) +
+  geom_histogram()
+
+ggplot(train_loan, aes(out_prncp ,fill = Loan_Status_Dummified, color = Loan_Status_Dummified)) +
+  geom_histogram()
+
+ggplot(train_loan, aes(out_prncp_inv ,fill = Loan_Status_Dummified, color = Loan_Status_Dummified)) +
+  geom_histogram()
+
+ggplot(train_loan, aes(delinq_2yrs ,fill = Loan_Status_Dummified, color = Loan_Status_Dummified)) +
+  geom_histogram()
+
+ggplot(train_loan, aes(inq_last_6mths ,fill = Loan_Status_Dummified, color = Loan_Status_Dummified)) +
+  geom_histogram()
+
+
+```
+
+#### **Check Box-Plot of Variables with Large NUmber of Zeros:**
+
+```{r box plot of variables with large no of zeros}
+
+ggplot(train_loan, aes(x=Loan_Status_Dummified,y=total_rec_late_fee,, color=Loan_Status_Dummified))+
+  geom_boxplot()
+
+
+ggplot(train_loan, aes(x=Loan_Status_Dummified,y=out_prncp,, color=Loan_Status_Dummified))+
+  geom_boxplot()
+
+
+ggplot(train_loan, aes(x=Loan_Status_Dummified,y=out_prncp_inv,, color=Loan_Status_Dummified))+
+  geom_boxplot()
+
+ggplot(train_loan, aes(x=Loan_Status_Dummified,y=delinq_2yrs,, color=Loan_Status_Dummified))+
+  geom_boxplot()
+
+ggplot(train_loan, aes(x=Loan_Status_Dummified,y=inq_last_6mths,, color=Loan_Status_Dummified))+
+  geom_boxplot()
+
+
+
+
+```
+
+#### **Check Significance:**
+
+```{r testing significance of high zeow variables}
+# independent 2-group Mann-Whitney U Test
+wilcox.test(train_loan$total_rec_late_fee~train_loan$Loan_Status_Dummified)
+wilcox.test(train_loan$out_prncp~train_loan$Loan_Status_Dummified)
+wilcox.test(train_loan$out_prncp_inv~train_loan$Loan_Status_Dummified)
+wilcox.test(train_loan$delinq_2yrs~train_loan$Loan_Status_Dummified)
+wilcox.test(train_loan$inq_last_6mths~train_loan$Loan_Status_Dummified)
+
+
+
+
+```
+
+Amongst the variables idenfied with high number of zero values, it seems that inq_last_6mths might not be significant for prediction of default. 
+
+```{r remove inq_last_6mths}
+
+train_loan$inq_last_6mths=NULL
+
+
+```
+
+
+
+#### **Univariate Analysis:**
+
+###### **Univariate-Numerical Attributes:**
+
+**Profiling Numeric-Attributes:**
+
+If we compare two classifiers, then we may prefer the one with less std_dev and variation_coef on its accuracy.
+
+Skewness: **The further the skewness is from 0 the more likely the distribution is to have outliers.** From the output above, its clear that the annual income variable is positivly skewed to a large extent. This would be a good variable to dig into.
+
+Kurtosis: describes the distribution tails; keeping it simple, a higher number may indicate the presence of outliers
+
+```{r Numerical Univariate_1}
+
+#### Profile statistics for numerical variables
+funModeling::profiling_num(train_loan) %>% dplyr::select(variable, mean, std_dev, skewness,p_01,p_99)
+
+```
+
+From the output is can be seen that the variables annnual_inc,delinq_2yrs,revol_bal,& total_rec_late_fee show large positive skew, hence problem of outliers. Let's see that in the plots.
+
+**Plot-Numeric Attributes-Histograms**
+
+Another function in funModeling is plot_num which takes a dataset and plots the distribution of every numerical variable while automatically excluding the non-numerical ones:
+
+```{r plot numerical variables-histograms}
+
+#### Plotting Numerical Attributes
+
+train_loan[, c(1:4)] %>%
+  keep(is.numeric) %>% 
+  gather()%>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(aes(y=..density..),
+                 col='black', 
+                 fill='dodgerblue1', 
+                 alpha=0.3) +
+    geom_density(adjust=3)
+    
+
+
+
+train_loan[, c(5:9)] %>%
+  keep(is.numeric) %>% 
+  gather()%>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(aes(y=..density..),
+                 col='black', 
+                 fill='dodgerblue1', 
+                 alpha=0.3) +
+    geom_density(adjust=3)
+
+
+train_loan[, c(10:15)] %>%
+  keep(is.numeric) %>% 
+  gather()%>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(aes(y=..density..),
+                 col='black', 
+                 fill='dodgerblue1', 
+                 alpha=0.3) +
+    geom_density(adjust=3)
+
+train_loan[, c(16:22)] %>%
+  keep(is.numeric) %>% 
+  gather()%>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(aes(y=..density..),
+                 col='black', 
+                 fill='dodgerblue1', 
+                 alpha=0.3) +
+    geom_density(adjust=3)
+
+
+train_loan[, c(23:25)] %>%
+  keep(is.numeric) %>% 
+  gather()%>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(aes(y=..density..),
+                 col='black', 
+                 fill='dodgerblue1', 
+                 alpha=0.3) +
+    geom_density(adjust=3)
+
+train_loan[, c(26:30)] %>%
+  keep(is.numeric) %>% 
+  gather()%>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free") +
+    geom_histogram(aes(y=..density..),
+                 col='black', 
+                 fill='dodgerblue1', 
+                 alpha=0.3) +
+    geom_density(adjust=3)
+
+
+
+
+```
+
+The loan amount distributions seems similar in shape suggesting not too much divergence between the loan amount applied for, the amount committed and the amount committed by investors.
+
+Int_rate curve seems largely normal, while installment curve shows mild positive skew.
+
+We can see that a lot of loans have corresponding annual income of zero and in general income seems low. As noted above, this variable has a large positive skew, as in general values are concentrated near 0.
+
+Similar observations can be seen across plots of different variables.
+
+## **Outlier Treatment:**
+
+```{r outlier capping}
+# Capping outliers in variables
+
+
+# Replacing extreme values with percentiles
+capOutlier <- function(x){
+   qnt <- quantile(x, probs=c(.25, .75), na.rm = T)
+   caps <- quantile(x, probs=c(.01, .99), na.rm = T)
+   H <- 1.5 * IQR(x, na.rm = T)
+   x[x < (qnt[1]-H)] <- caps[1]
+   x[x > (qnt[2]+H)] <- caps[2]
+   return(x)
+}
+
+train_loan$loan_amnt=capOutlier(train_loan$loan_amnt)
+train_loan$funded_amnt=capOutlier(train_loan$funded_amnt)
+train_loan$funded_amnt_inv=capOutlier(train_loan$funded_amnt_inv)
+
+
+train_loan$annual_inc=capOutlier(train_loan$annual_inc)
+train_loan$dti=capOutlier(train_loan$dti)
+train_loan$delinq_2yrs=capOutlier(train_loan$delinq_2yrs)
+
+train_loan$mths_since_last_delinq=capOutlier(train_loan$mths_since_last_delinq)
+train_loan$open_acc=capOutlier(train_loan$open_acc)
+train_loan$revol_bal=capOutlier(train_loan$revol_bal)
+train_loan$revol_util=capOutlier(train_loan$revol_util)
+
+train_loan$out_prncp=capOutlier(train_loan$out_prncp)
+train_loan$out_prncp_inv=capOutlier(train_loan$out_prncp_inv)
+train_loan$total_pymnt=capOutlier(train_loan$total_pymnt)
+train_loan$total_pymnt_inv=capOutlier(train_loan$total_pymnt_inv)
+train_loan$total_rec_prncp=capOutlier(train_loan$total_rec_prncp)
+train_loan$total_rec_int=capOutlier(train_loan$total_rec_int)
+train_loan$total_rec_late_fee=capOutlier(train_loan$total_rec_late_fee)
+train_loan$last_pymnt_amnt=capOutlier(train_loan$last_pymnt_amnt)
+
+
+```
+
+
+###### **Univariate-Categorical Attributes:**
+
+**Profiling categorical variables:**
+
+Factor/categorical variables with a high number of different values (~30) tend to do overfitting if the categories have low cardinality (decision trees, for example). This is referred to as variables with high-cardinality.
+
+For profiling categorical variables, funmodelling::freq function would be used. This retrieves the distribution in a table and a plot (by default) and shows the distribution of absolute and relative numbers.
+
+```{r  Univariate Categorical Univariate}
+
+#### Profile Categorical Variables
+
+freq(data=train_loan) # if input is missing package runs for all factor or character variables present in a given data frame
+
+```
+
+From the output the spread of variables across different categories can be seen.Intuition suggest that the categories across some of the variables such as emp_length, purpose & addr_state could be consolidated, as the number in its original form seems little high.
+
+
+#### **Bivariate Analysis:**
+
+###### **Bivariate-Numerical Attributes:**
+
+**Profiling Numerical Attributes by Target**
+
+```{r bivariate numerical}
+#### Profile numerical attributes by target variable
+
+desc_groups(train_loan,group_var="Loan_Status_Dummified", group_func = mean, add_all_data_row = F)
+```
+
+Differences in mean amount of individual variables across default and non-default categories can be seeen. They seem more pronounced for some of the variables including dti,out_prncp,out_prncp_inv,total_pymnt, last_pymnt_amnt etc..
+
+**Plotting Numerical Attributes by Target-BoxPlot**
+```{r box plots  }
+
+plotar(data=train_loan[,c(1:15,30)],input = , target="Loan_Status_Dummified", plot_type="boxplot")
+
+plotar(data=train_loan[,c(16:30)],input = , target="Loan_Status_Dummified", plot_type="boxplot")
+
+
+```
+
+
+From the boxplots it looks like mths_since_last_deliq, revol_bal,revol_util,total_acc,could be removed. But lets check after correlation analysis if some could be discarded.
+
+```{r}
+
+wilcox.test(train_loan$loan_amnt ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$funded_amnt ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$funded_amnt_inv ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$int_rate ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$installment ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$annual_inc ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$dti ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$mths_since_last_delinq ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$open_acc ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$revol_bal ~train_loan$Loan_Status_Dummified, )
+
+wilcox.test(train_loan$revol_util ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$total_acc ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$total_pymnt ~train_loan$Loan_Status_Dummified, )
+
+
+wilcox.test(train_loan$total_pymnt_inv ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$total_rec_prncp ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$total_rec_int ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$total_rec_late_fee ~train_loan$Loan_Status_Dummified, )
+wilcox.test(train_loan$last_pymnt_amnt ~train_loan$Loan_Status_Dummified, )
+
+wilcox.test(train_loan$Age_Credit_Line ~train_loan$Loan_Status_Dummified, )
+
+
+```
+
+When checking for statistical significance of numerical attributes ( on target) its clear that revol_bal and total_acc all variables seem significant. Lets remove these 3 variables.
+
+```{r remove insignificant numericcal attributes}
+
+train_loan$total_acc=NULL
+
+```
+
+###### **Bivariate-Categorical Attributes:**
+
+**Profiling Categorical Attributes by Target**
+
+
+```{r bivariate categorical}
+# `categ_analysis`
+
+categ_profiling= categ_analysis(data=train_loan, target = "Loan_Status_Dummified")
+
+
+
+```
+
+
+**Plotting Categorical Attributes by Target**
+
+```{r Analysis of Cateorical Variables to default}
+
+
+#### Cross Plot-Retrieves the relative and absolute distribution between an input and target variable. Useful to explain and report if a variable is important or not.
+
+cat_for_bivariate= c("term", "grade","emp_length", "home_ownership", "verification_status","purpose","addr_state_rec")
+cross_plot(data=train_loan, input=cat_for_bivariate, target="Loan_Status_Dummified")
+
+
+#### CHi Sq Test for categorical varianles
+
+chisq.test(train_loan$term, train_loan$Loan_Status_Dummified)
+chisq.test(train_loan$grade, train_loan$Loan_Status_Dummified)
+chisq.test(train_loan$emp_length, train_loan$Loan_Status_Dummified)
+chisq.test(train_loan$home_ownership, train_loan$Loan_Status_Dummified)
+chisq.test(train_loan$verification_status, train_loan$Loan_Status_Dummified)
+chisq.test(train_loan$purpose, train_loan$Loan_Status_Dummified)
+chisq.test(train_loan$addr_state_rec, train_loan$Loan_Status_Dummified)
+
+
+```
+
+It can be seen from the chart below that rates of default steadily increase as the loan grades worsen from A to G, as expected. In general, it looks like the grading system does a pretty great job of predicting ultimate loan performance, but let's check out some of the other available data to see what other trends we might be able to find in the data.
+
+```{r}
+
+train_loan$addr_state_rec=NULL
+```
+  
+## **Correlation :**
+
+Many models rely on the notion of correlation between independent and dependent variables so a natural exploratoy visualization would be a correlation plot or correlogram. One library offering this is corrplot with its main function corrplot::corrplot(). The function takes as input the correlation matrix that can be produced with stats::cor(). This of course is only defined for numeric, non-missing variables. In order to have a reasonable information density in the correlation matrix, we will kick out some variables with a missing value share of larger 50%.
+
+Let’s again build a numeric variable vector after all previous operations and look at correlations.
+
+
+```{r}
+
+correlation_table(train_loan,"Loan_Status_Dummified")
+
+
+
+#### build a numeric variable vector 
+names(train_loan)
+num_vars <- 
+  train_loan[,] %>% 
+  sapply(is.numeric) %>% 
+  which() %>% 
+  names()
+
+num_vars
+
+meta_train <- funModeling::df_status(train_loan, print_results = FALSE)
+
+meta_train %>%
+  dplyr::select(variable, p_zeros, p_na, unique) %>%
+  dplyr::filter_(~ variable %in% num_vars) %>%
+  knitr::kable()
+```
+
+
+
+#### **Check Correlation:**
+
+
+Finally, we can produce a correlation plot. Dealing with missing values, using option use = "pairwise.complete.obs" in function stats::cor() is considered bad practice as it uses pair matching and correlations may not be comparable, see e.g. Pairwise-complete correlation considered dangerous. Alternatively, we can use option use = complete.obs which only considers complete observations but may discard a lot of data. However, as we have looked into the meta information, after our wrangling the proportion of missing values for the numeric variables has dropped a lot so we should be fine.
+
+```{r CHECK CORRELATION}
+library(corrplot)
+train_loan=as.data.frame(train_loan)
+
+matrix_1 = cor(train_loan[,num_vars])
+col= colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot::corrplot(matrix_1, method = "color", col=col(200),tl.cex = 0.70,  addCoef.col = "black", number.digits = 2, number.cex = 0.50)
+```
+
+#### **Remove Variables***
+
+Rather than a visual inspection, an (automatic) inspection of correlations and removal of highly correlated features can be done via function caret::findCorrelation() with a defined cutoff parameter. If two variables have a high correlation, the function looks at the mean absolute correlation of each variable and removes the variable with the largest mean absolute correlation. Using exact = TRUE will cause the function to re-evaluate the average correlations at each step while exact = FALSE uses all the correlations regardless of whether they have been eliminated or not. The exact calculations will remove a smaller number of predictors but can be much slower when the problem dimensions are “big”.
+
+
+```{r remove multcolliner variables}
+
+
+caret::findCorrelation(cor((train_loan[, num_vars]) , use = "complete.obs"), names = TRUE, cutoff = .5, exact = TRUE)
+
+
+
+
+```
+
+
+#### **Variables Remove:**
+```{r remove vars}
+vars_to_remove <- 
+ c("total_pymnt", "total_pymnt_inv", "total_rec_prncp", "funded_amnt",
+    "funded_amnt_inv", "loan_amnt", "installment","out_prncp")
+
+train_loan <-train_loan %>% dplyr::select(-one_of(vars_to_remove))
+
+
+names(train_loan)
+
+
+
+
+
+```
+
+## **Lets Check Significance of Variables Which are Zero Inflated and Inuitive Insignificant Varaibles Again:**
+
+```{r check significance of vars which are zero inflated}
+
+logistic_model_zero_inflated_vars=glm(Loan_Status_Dummified~total_rec_late_fee+out_prncp_inv+delinq_2yrs, data = train_loan, family = binomial(link = "logit"))
+
+summary(logistic_model_zero_inflated_vars)
+vif(logistic_model_zero_inflated_vars)
+
+# Remove out_prncp_inv 
+
+logistic_model_zero_inflated_vars_1=glm(Loan_Status_Dummified~total_rec_late_fee+delinq_2yrs, data = train_loan, family = binomial(link = "logit"))
+
+summary(logistic_model_zero_inflated_vars_1)
+
+
+```
+
+#### **Remove out_prncp_inv from Training Data:**
+
+```{r remove out_prncp_inv }
+
+train_loan$out_prncp_inv=NULL
+
+```
+
+
+
+## **Model Development:**
+
+#### **Logistic Regression:**
+
+###### **Logistic Model Without Balancing:**
+
+```{r}
+
+logistic_model_1 = train(
+  form = Loan_Status_Dummified ~ .,
+  data = train_loan,
+  trControl = trainControl(method = "cv", number = 5),
+  method = "glm",
+  family = "binomial"
+)
+
+logistic_model_1
+
+logistic_model_1$results
+logistic_model_1$finalModel
+
+summary(logistic_model_1)
+
+
+logistic_model_2 = train(
+  form = Loan_Status_Dummified ~.-mths_since_last_delinq,
+  data = train_loan,
+  trControl = trainControl(method = "cv", number = 5),
+  method = "glm",
+  family = "binomial"
+)
+
+
+logistic_model_2
+
+logistic_model_2$results
+logistic_model_2$finalModel
+
+summary(logistic_model_2)
+
+
+
+```
+
+## **Balancing the Dataset:**
+
+
+```{r}
+train_loan_down <- 
+  caret::downSample(x = train_loan[, !(names(train_loan) %in% c("Loan_Status_Dummified"))], 
+                    y = as.factor(train_loan$Loan_Status_Dummified), yname = "Loan_Status_Dummified")
+
+base::prop.table(table(train_loan_down$Loan_Status_Dummified))
+
+dim(train_loan_down)
+
+names(train_loan_down)
+
+```
+
+
+## **Prepare Testing Data:**
+
+```{r prepare testing data}
+names(test_loan)
+#### Remove Variables
+test_loan=test_loan[,-c(1:3,6,15,20:25,30)]
+
+
+
+```
+
+
+
+## **Transforming Loan Status Dummified in Train & Test:**
+
+```{r transforms loan status dummisified in train and test}
+
+#### Check lvels oof loan status dumiied in tes and train
+
+levels(train_loan_down$Loan_Status_Dummified)
+levels(test_loan$Loan_Status_Dummified)
+
+
+train_loan_down$Loan_Status_Dummified= as.factor(ifelse(train_loan_down$Loan_Status_Dummified == "1","Yes", "No"))
+
+test_loan$Loan_Status_Dummified= as.factor(ifelse(test_loan$Loan_Status_Dummified == "1", "Yes", "No"))
+
+
+```
+
+
+
+
+## **Model_Building After Balancing:**
+
+
+#### **Logistic Regression:**
+
+```{r logit model after balance}
+set.seed(123)
+ctrl_Logit <- 
+  trainControl(method = "repeatedcv", 
+               number = 10,
+               repeats = 5,
+               classProbs = TRUE,
+               summaryFunction =twoClassSummary,
+               savePredictions = TRUE,
+               verboseIter = FALSE
+               )
+
+
+
+
+logistic_model_balnced_1 = train(
+  form = (Loan_Status_Dummified) ~.,
+  data = train_loan_down,
+  method = "glm",
+  family = "binomial",
+  metric = "ROC",
+  trControl = ctrl_Logit)
+
+
+
+logistic_model_balnced_1
+
+
+
+logistic_model_balnced_1$results
+logistic_model_balnced_1$finalModel
+
+
+summary(logistic_model_balnced_1$finalModel)
+
+predictors(logistic_model_balnced_1)
+
+plot(caret::varImp(logistic_model_balnced_1), top=5)
+
+
+
+```
+
+
+#### **Prepare for Confusion Matrix:**
+
+```{r prepare for confusion matrix}
+train_prob=predict(logistic_model_balnced_1, data = train_loan_down, type = 'prob')
+test_prob=predict(logistic_model_balnced_1, newdata = test_loan,type = 'prob')
+
+```
+
+#### **In_Sample_Confusion_Matrix:**
+
+```{r insample cm}
+
+#### COnfusion Matrix-Insample
+
+confusionMatrix(data=as.factor(ifelse(train_prob[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(train_loan_down$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes")
+
+#### Preciscion, Recall-Insample
+
+confusionMatrix(data=as.factor(ifelse(train_prob[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(train_loan_down$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes",mode = "prec_recall")
+
+
+
+```
+
+#### **Other Performance Measures-Logit**
+
+```{r roc logistic train}
+
+
+roc_logistic_model_balnced_1 <- 
+  pROC::roc(response = as.factor(ifelse(train_loan_down$Loan_Status_Dummified=="Yes","Yes","No")), 
+            predictor = train_prob[, "Yes"])
+
+roc_logistic_model_balnced_1
+
+
+# ROC Curve logit insample
+library(ROCR)
+library(pROC)
+library(caTools)
+library(plotROC)
+
+
+pROC::plot.roc(x = roc_logistic_model_balnced_1, legacy.axes = FALSE, xlim = c(1, 0), asp = NA, col = "blue")
+
+
+```
+
+
+
+#### **Out_Sample_Confusion_Matrix:**
+
+```{r outsample cm}
+
+#### COnfusion Matrix-out sample
+
+confusionMatrix(data=as.factor(ifelse(test_prob[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes")
+
+#### Preciscion, Recall-Out sample
+
+confusionMatrix(data=as.factor(ifelse(test_prob[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes",mode = "prec_recall")
+
+
+```
+
+#### **Other Performance Measures-Logit**
+
+```{r roc logistic test}
+
+roc_logistic_model_balnced_2 <- 
+  pROC::roc(response = as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), 
+            predictor = test_prob[, "Yes"])
+
+roc_logistic_model_balnced_2
+
+
+# ROC Curve logit insample
+library(ROCR)
+library(pROC)
+library(caTools)
+library(plotROC)
+
+
+pROC::plot.roc(x = roc_logistic_model_balnced_2, legacy.axes = FALSE, xlim = c(1, 0), asp = NA, col = "blue")
+
+
+
+```
+
+#### ** Classification & Regression Tree:**
+
+
+```{r CART model}
+set.seed(123)
+ctrl_CART <- 
+  trainControl(method = "repeatedcv", 
+               number = 10,
+               repeats = 5,
+               summaryFunction =twoClassSummary,
+               classProbs = TRUE,
+               verboseIter = FALSE,
+               allowParallel = TRUE,
+                              )
+
+
+
+#### Using Complexity Parameter
+CART_model_balnced_1 = train(
+ Loan_Status_Dummified ~ .,
+  data = train_loan_down,
+  trControl = ctrl_CART,
+  method = "rpart", metric= 'ROC', tuneLength=10)
+
+
+CART_model_balnced_1
+
+#### Check CP viasually
+
+ggplot(CART_model_balnced_1)
+
+
+CART_model_balnced_1$results
+CART_model_balnced_1$finalModel
+
+library(rpart.plot)
+rpart.plot(CART_model_balnced_1$finalModel)
+
+plot(caret::varImp(CART_model_balnced_1),top = 5)
+
+
+
+```
+
+```{r Average confusion martix}
+#### Averaged confusion matrices
+
+confusionMatrix(CART_model_balnced_1,positive = "Yes")
+
+
+```
+
+#### **CART Prediction:**
+
+```{r prepare for CART Confusion Martix}
+
+train_prob_CART=predict(CART_model_balnced_1, data = train_loan_down,type = 'prob')
+test_prob_CART=predict(CART_model_balnced_1, newdata = test_loan,type = 'prob')
+
+
+```
+
+#### **In-Sample Consusion Matrix_CART:**
+
+
+```{r}
+
+#### COnfusion Matrix-Insample_CART
+
+#### COnfusion Matrix-Insample
+
+confusionMatrix(data=as.factor(ifelse(train_prob_CART[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(train_loan_down$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes")
+
+#### Preciscion, Recall-Insample
+
+confusionMatrix(data=as.factor(ifelse(train_prob_CART[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(train_loan_down$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes",mode = "prec_recall")
+
+
+
+```
+
+
+#### **Other Performance Measures CART-IN-Sample:**
+
+```{r roc cart in sample}
+
+roc_CART_model_balnced_1 <- 
+  pROC::roc(response = as.factor(ifelse(train_loan_down$Loan_Status_Dummified=="Yes","Yes","No")), 
+            predictor = train_prob_CART[, "Yes"])
+
+roc_CART_model_balnced_1
+
+
+# ROC Curve logit insample
+library(ROCR)
+library(pROC)
+library(caTools)
+library(plotROC)
+
+
+pROC::plot.roc(x = roc_CART_model_balnced_1, legacy.axes = FALSE, xlim = c(1, 0), asp = NA, col = "red")
+
+
+
+```
+
+#### **Out-Sample Consusion Matrix_CART:**
+
+
+```{r}
+
+#### COnfusion Matrix-Outsample_CART
+
+confusionMatrix(data=as.factor(ifelse(test_prob_CART[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes")
+
+
+#### Preciscion, Recall-Insample
+
+confusionMatrix(data=as.factor(ifelse(test_prob_CART[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes",mode = "prec_recall")
+
+
+```
+
+#### **Other Performance Measures CART-Out-Sample:**
+
+```{r roc cart out sample_1}
+roc_CART_model_balnced_2 <- 
+  pROC::roc(response = as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), 
+            predictor = test_prob_CART[, "Yes"])
+
+roc_CART_model_balnced_2
+
+
+# ROC Curve logit insample
+library(ROCR)
+library(pROC)
+library(caTools)
+library(plotROC)
+
+
+pROC::plot.roc(x = roc_CART_model_balnced_2, legacy.axes = FALSE, xlim = c(1, 0), asp = NA, col = "red")
+
+
+```
+
+
+## **Random Forest:**
+
+```{r}
+library(randomForest)
+library(caret)
+library(dplyr)
+#install.packages("MLmetrics")
+library(MLmetrics)
+library(mlbench)
+set.seed(123)
+ctrl_RF <- 
+  caret::trainControl(method = "repeatedcv", 
+               number = 5,
+               repeats = 1,
+               summaryFunction =twoClassSummary,
+               classProbs = TRUE,
+               verboseIter = FALSE,
+               allowParallel = TRUE)
+
+
+mtry <- sqrt(ncol(train_loan_down))
+tunegrid <- expand.grid(.mtry=mtry)
+
+#### Using RF Model
+
+RF_model_balnced_1 = train(
+  Loan_Status_Dummified ~.,
+  data = train_loan_down,
+  method = "rf", 
+  metric= 'ROC',
+  ntree = 20,
+  trControl = ctrl_RF)
+
+RF_model_balnced_1
+
+
+plot(RF_model_balnced_1$finalModel)
+
+plot(caret::varImp(RF_model_balnced_1), top=5)
+
+```
+
+#### **RF Prediction:**
+
+
+```{r prepapre for rf confucion matrix}
+
+train_prob_RF=predict(RF_model_balnced_1, data = train_loan_down, type='prob')
+test_prob_RF=predict(RF_model_balnced_1, newdata = test_loan, type='prob')
+
+
+
+
+
+
+```
+
+#### **In-Sample Consusion Matrix_RF:**
+
+
+```{r RF in sample conduion matrix}
+
+#### COnfusion Matrix-insample_RF
+
+confusionMatrix(data=as.factor(ifelse(train_prob_RF[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(train_loan_down$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes")
+
+#### Preciscion, Recall-Insample
+
+confusionMatrix(data=as.factor(ifelse(train_prob_RF[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(train_loan_down$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes",mode = "prec_recall")
+
+
+```
+
+
+#### **Out-Sample Consusion Matrix_RF:**
+
+
+```{r RF Out sample conduion matrix}
+
+
+#### COnfusion Matrix-insample_RF
+
+confusionMatrix(data=as.factor(ifelse(test_prob_RF[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes")
+
+#### Preciscion, Recall-Insample
+
+confusionMatrix(data=as.factor(ifelse(test_prob_RF[, "Yes"]>0.5,"Yes","No")) , reference=as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), positive = "Yes",mode = "prec_recall")
+
+
+```
+
+#### **Other Performance Measures RF-Out-Sample:**
+
+```{r roc cart out sample}
+roc_RF_model_balnced_2 <- 
+  pROC::roc(response = as.factor(ifelse(test_loan$Loan_Status_Dummified=="Yes","Yes","No")), 
+            predictor = test_prob_RF[, "Yes"])
+
+roc_RF_model_balnced_2
+
+
+# ROC Curve logit insample
+library(ROCR)
+library(pROC)
+library(caTools)
+library(plotROC)
+
+
+pROC::plot.roc(x = roc_RF_model_balnced_2, legacy.axes = FALSE, xlim = c(1, 0), asp = NA, col = "orange")
+
+
+```
+
+```{r}
+pROC::plot.roc(x = roc_logistic_model_balnced_2, legacy.axes = FALSE, xlim = c(1, 0), asp = NA,col = "blue")
+
+pROC::plot.roc(x = roc_CART_model_balnced_2, legacy.axes = FALSE, xlim = c(1, 0), asp = NA,add = TRUE, col = "red")
+
+pROC::plot.roc(x = roc_RF_model_balnced_2, legacy.axes = FALSE, xlim = c(1, 0), asp = NA, add = TRUE, col = "orange")
+
+legend(x = "bottomright", legend=c("Logistic AUC = 0.953", "CART AUC = 0.942",
+                                   "RF AUC = 0.977"), 
+       col = c("blue", "red", "orange"), lty = 1, cex = 1.0)
+
+
+
+
+```
+
